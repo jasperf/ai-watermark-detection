@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-08-14
+
+### Changed
+- Updated README.md to reference standalone `ai_watermark_scanner.py` script instead of inline code
+- Removed embedded Python script from README.md Technical Implementation section
+- Updated all script references from `scanner.py` to `ai_watermark_scanner.py`
+
+---
+
 ## [1.0.0] - 2026-08-14
 
 ### Added

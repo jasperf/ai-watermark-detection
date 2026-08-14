@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" 
+     xmlns:c2pa="http://c2pa.org/" 
+     width="100" height="100">
+  
+  <metadata>
+    <c2pa:manifest xmlns:c2pa="http://c2pa.org/">
+      <c2pa:assertion>
+        <c2pa:generator>Claude AI</c2pa:generator>
+        <c2pa:action>generated</c2pa:action>
+      </c2pa:assertion>
+    </c2pa:manifest>
+  </metadata>
+  
+  <rect width="100" height="100" fill="blue"/>
+  
+  <c2pa:signature xmlns:c2pa="http://c2pa.org/">
+    signature-data-here
+  </c2pa:signature>
+  
+</svg>

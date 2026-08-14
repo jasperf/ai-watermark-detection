@@ -25,8 +25,11 @@ import os
 import sys
 import re
 import struct
+import statistics
+import unicodedata
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
+from collections import Counter
 
 
 # =============================================================================
@@ -386,9 +389,529 @@ def get_file_type(filepath: str) -> str:
         return 'unknown'
 
 
-def check_file_for_watermarks(filepath: str) -> Dict[str, Any]:
+# =============================================================================
+# ADVANCED AI WATERMARK DETECTION - Statistical and Structural Analysis
+# Based on: @docs/advanced-ai-watermark-detection.md
+# =============================================================================
+
+
+def analyze_sentence_lengths(text: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    Calculate sentence length statistics.
+    Returns (avg_length, std_dev, median_length) or (None, None, None) if insufficient sentences.
+    """
+    sentences = re.split(r'[.!?]+', text)
+    sentences = [s.strip() for s in sentences if len(s.split()) > 3]
+    
+    if len(sentences) < 2:
+        return None, None, None
+    
+    lengths = [len(s.split()) for s in sentences]
+    avg_length = statistics.mean(lengths)
+    std_dev = statistics.stdev(lengths) if len(lengths) > 1 else 0.0
+    median_length = statistics.median(lengths)
+    
+    return avg_length, std_dev, median_length
+
+
+def calculate_ttr(text: str) -> float:
+    """Calculate Type-Token Ratio (unique words / total words)."""
+    words = text.lower().split()
+    if not words:
+        return 0.0
+    unique_words = set(words)
+    return len(unique_words) / len(words)
+
+
+def calculate_mattr(text: str, window_size: int = 100) -> float:
+    """Calculate Moving-Average Type-Token Ratio."""
+    words = text.lower().split()
+    if len(words) < window_size:
+        return calculate_ttr(text)
+    
+    mattr_values = []
+    for i in range(len(words) - window_size + 1):
+        window = words[i:i+window_size]
+        unique = set(window)
+        mattr_values.append(len(unique) / window_size)
+    
+    return statistics.mean(mattr_values) if mattr_values else 0.0
+
+
+def analyze_heading_hierarchy(text: str) -> Tuple[List[Tuple[int, str]], int]:
+    """
+    Analyze markdown heading hierarchy.
+    Returns (list of (level, title) tuples, consistency_score).
+    """
+    headings = []
+    for match in re.finditer(r'^(#{1,6})\s+(.+)$', text, re.MULTILINE):
+        level = len(match.group(1))
+        title = match.group(2).strip()
+        headings.append((level, title))
+    
+    if not headings:
+        return headings, 0
+    
+    issues = 0
+    prev_level = 0
+    for i, (level, title) in enumerate(headings):
+        if i == 0:
+            if level != 1:
+                issues += 1
+        else:
+            if level > prev_level + 1:
+                issues += 1
+        prev_level = level
+    
+    return headings, issues
+
+
+def analyze_list_uniformity(text: str) -> str:
+    """
+    Check markdown list marker uniformity.
+    Returns 'mixed', 'uniform', or 'none'.
+    """
+    markers = set()
+    for match in re.finditer(r'^\s*([-*+])\s+', text, re.MULTILINE):
+        markers.add(match.group(1))
+    
+    ul_items = re.findall(r'^\s*[-*+]\s+(.+)$', text, re.MULTILINE)
+    
+    if len(markers) > 1:
+        return "mixed"
+    elif len(markers) == 1 and ul_items:
+        return "uniform"
+    else:
+        return "none"
+
+
+def analyze_code_blocks(text: str) -> Optional[float]:
+    """
+    Analyze code block language tagging.
+    Returns ratio of tagged code blocks to total, or None if no code blocks.
+    """
+    tagged_blocks = re.findall(r'```(\w+)\n([\s\S]+?)```', text)
+    untagged_blocks = re.findall(r'```\n([\s\S]+?)```', text)
+    
+    total_blocks = len(tagged_blocks) + len(untagged_blocks)
+    if total_blocks == 0:
+        return None
+    
+    return len(tagged_blocks) / total_blocks
+
+
+def analyze_markdown_spacing(text: str) -> int:
+    """
+    Check markdown spacing consistency.
+    Returns number of spacing issues found.
+    """
+    lines = text.split('\n')
+    issues = []
+    
+    for i, line in enumerate(lines):
+        if re.match(r'^#{1,6}\s+.+$', line):
+            pass
+        elif re.match(r'^#{1,6}[^\s].+$', line):
+            issues.append(f"Line {i+1}: No space after heading marker")
+        elif re.match(r'^#{1,6}\s{2,}.+$', line):
+            issues.append(f"Line {i+1}: Multiple spaces after heading marker")
+        
+        if line.rstrip() != line:
+            issues.append(f"Line {i+1}: Trailing whitespace")
+    
+    return len(issues)
+
+
+def check_unicode_normalization(text: str) -> str:
+    """
+    Check if text uses non-NFC Unicode normalization.
+    Returns 'non_nfc', 'non_nfd', or 'normalized'.
+    """
+    nfc_text = unicodedata.normalize('NFC', text)
+    nfd_text = unicodedata.normalize('NFD', text)
+    
+    if text != nfc_text:
+        return "non_nfc"
+    if text != nfd_text:
+        return "non_nfd"
+    return "normalized"
+
+
+def check_bidi_overrides(text: str) -> List[str]:
+    """Check for bidirectional override characters."""
+    bidi_chars = [
+        '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+        '\u2066', '\u2067', '\u2068', '\u2069'
+    ]
+    return [c for c in bidi_chars if c in text]
+
+
+def check_math_alphabetic(text: str) -> List[str]:
+    """Check for mathematical alphabetic characters (U+1D400-U+1D7FF)."""
+    math_chars = []
+    for char in text:
+        codepoint = ord(char)
+        if 0x1D400 <= codepoint <= 0x1D7FF:
+            math_chars.append(char)
+    return math_chars
+
+
+def check_tag_characters(text: str) -> List[str]:
+    """Check for tag characters (U+E0000-U+E007F)."""
+    tag_chars = []
+    for char in text:
+        codepoint = ord(char)
+        if 0xE0000 <= codepoint <= 0xE007F:
+            tag_chars.append(char)
+    return tag_chars
+
+
+def check_prompt_leakage(text: str) -> List[str]:
+    """Check for common prompt leakage patterns."""
+    prompt_patterns = [
+        r'As a \w+',
+        r'Write a \w+',
+        r'Please compose',
+        r'Create a \w+',
+        r'You are a \w+',
+        r'Act as a \w+',
+        r'I need you to',
+        r'Your task is to',
+        r'In the style of',
+        r'Using the following',
+        r'Based on the',
+        r'Given the',
+        r'Make sure to',
+        r'Ensure that',
+        r'The following is',
+    ]
+    
+    matches = []
+    for pattern in prompt_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            matches.append(pattern)
+    
+    return matches
+
+
+def check_token_repetition(text: str, n: int = 3, min_repeats: int = 2) -> Dict[str, int]:
+    """Check for repeated n-gram sequences."""
+    words = text.lower().split()
+    ngrams = [tuple(words[i:i+n]) for i in range(len(words)-n+1)]
+    ngram_counts = Counter(ngrams)
+    
+    return {ngram: count for ngram, count in ngram_counts.items() if count >= min_repeats}
+
+
+def check_eos_patterns(text: str) -> List[str]:
+    """Check for end-of-sequence token patterns."""
+    eos_patterns = [
+        r'<\[im_end\]>',
+        r'<\[im_start\]>',
+        r'<EOS>',
+        r'<END>',
+        r'\n\n<',
+        r'\|\|',
+        r'<\[',
+        r'\|>',
+    ]
+    
+    matches = []
+    for pattern in eos_patterns:
+        if re.search(pattern, text):
+            matches.append(pattern)
+    
+    return matches
+
+
+def check_statistical_watermarks(text: str) -> Dict[str, Any]:
+    """
+    Check for statistical and structural AI watermarks.
+    Minimal dependencies version (pure Python + built-ins).
+    
+    Based on: @docs/advanced-ai-watermark-detection.md
+    """
+    results = {
+        'sentence_length_variance': None,
+        'sentence_avg_length': None,
+        'sentence_median_length': None,
+        'ttr': None,
+        'mattr': None,
+        'heading_hierarchy': None,
+        'heading_hierarchy_consistency': None,
+        'list_uniformity': None,
+        'code_block_tagged_ratio': None,
+        'unicode_normalization': None,
+        'bidi_overrides': None,
+        'math_alphabetic_chars': None,
+        'tag_characters': None,
+        'prompt_leakage': None,
+        'token_repetition': None,
+        'eos_patterns': None,
+        'markdown_spacing_issues': None,
+        'has_statistical_watermark': False,
+        'statistical_notes': []
+    }
+    
+    # 1. Sentence Length Variance
+    avg_len, std_dev, median_len = analyze_sentence_lengths(text)
+    if avg_len is not None:
+        results['sentence_avg_length'] = avg_len
+        results['sentence_median_length'] = median_len
+        results['sentence_length_variance'] = std_dev
+        # For technical prose, std_dev < 5 is suspicious
+        if std_dev and std_dev < 5:
+            results['has_statistical_watermark'] = True
+            results['statistical_notes'].append(f"Low sentence length variance (std_dev={std_dev:.1f})")
+    
+    # 2. Type-Token Ratio
+    words = text.lower().split()
+    if words:
+        ttr = calculate_ttr(text)
+        mattr = calculate_mattr(text) if len(words) > 100 else ttr
+        results['ttr'] = ttr
+        results['mattr'] = mattr
+        # Thresholds: TTR < 0.45 for long texts is suspicious
+        if len(words) > 1000 and ttr < 0.45:
+            results['has_statistical_watermark'] = True
+            results['statistical_notes'].append(f"Low TTR ({ttr:.3f})")
+        if len(words) > 1000 and mattr < 0.55:
+            results['has_statistical_watermark'] = True
+            results['statistical_notes'].append(f"Low MATTR ({mattr:.3f})")
+    
+    # 3. Heading Hierarchy
+    headings, consistency_score = analyze_heading_hierarchy(text)
+    if headings:
+        results['heading_hierarchy'] = [f"H{level}: {title}" for level, title in headings]
+        results['heading_hierarchy_consistency'] = consistency_score
+        # Perfect hierarchy with >3 headings is AI-like
+        if consistency_score == 0 and len(headings) > 3:
+            results['has_statistical_watermark'] = True
+            results['statistical_notes'].append("Perfect heading hierarchy (AI-like)")
+    
+    # 4. List Uniformity
+    uniformity = analyze_list_uniformity(text)
+    results['list_uniformity'] = uniformity
+    if uniformity == "uniform":
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append("Uniform list markers (AI-like)")
+    
+    # 5. Code Block Style
+    tagged_ratio = analyze_code_blocks(text)
+    results['code_block_tagged_ratio'] = tagged_ratio
+    # Human technical writing: tagged_ratio typically > 0.7
+    # AI writing: tagged_ratio often < 0.3
+    if tagged_ratio is not None and tagged_ratio < 0.3:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"Low code block tagging (ratio={tagged_ratio:.2f})")
+    
+    # 6. Unicode Normalization
+    normalization = check_unicode_normalization(text)
+    results['unicode_normalization'] = normalization
+    if normalization != "normalized":
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"Non-normalized Unicode ({normalization})")
+    
+    # 7. Bidi Overrides
+    bidi_chars = check_bidi_overrides(text)
+    results['bidi_overrides'] = bidi_chars
+    if bidi_chars:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"Bidi override chars: {bidi_chars}")
+    
+    # 8. Mathematical Alphabetic Characters
+    math_chars = check_math_alphabetic(text)
+    results['math_alphabetic_chars'] = math_chars
+    if math_chars:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"Math alphabetic chars: {[f'U+{ord(c):04X}' for c in math_chars]}")
+    
+    # 9. Tag Characters
+    tag_chars = check_tag_characters(text)
+    results['tag_characters'] = tag_chars
+    if tag_chars:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"Tag characters: {[f'U+{ord(c):06X}' for c in tag_chars]}")
+    
+    # 10. Prompt Leakage
+    prompt_matches = check_prompt_leakage(text)
+    results['prompt_leakage'] = prompt_matches
+    if prompt_matches:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"Prompt leakage: {prompt_matches[:3]}")
+    
+    # 11. Token Repetition
+    repeated_ngrams = check_token_repetition(text, n=3, min_repeats=2)
+    results['token_repetition'] = repeated_ngrams
+    # Filter out common phrases
+    common_phrases = {"of the", "in the", "to the", "with the", "for the"}
+    unusual_repeats = {
+        ' '.join(ngram): count 
+        for ngram, count in repeated_ngrams.items() 
+        if ' '.join(ngram) not in common_phrases
+    }
+    if unusual_repeats:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"Unusual token repetition: {list(unusual_repeats.keys())[:3]}")
+    
+    # 12. EOS Patterns
+    eos_matches = check_eos_patterns(text)
+    results['eos_patterns'] = eos_matches
+    if eos_matches:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append(f"EOS patterns: {eos_matches}")
+    
+    # 13. Markdown Spacing
+    spacing_issues = analyze_markdown_spacing(text)
+    results['markdown_spacing_issues'] = spacing_issues
+    # AI writing: spacing_issues = 0 (too perfect)
+    # Only flag if document is long enough (>50 lines)
+    if spacing_issues == 0 and len(text.split('\n')) > 50:
+        results['has_statistical_watermark'] = True
+        results['statistical_notes'].append("Perfect markdown spacing (AI-like)")
+    
+    return results
+
+
+# =============================================================================
+# ADVANCED WATERMARK DETECTION - Requires spaCy and sentence-transformers
+# =============================================================================
+
+def check_advanced_watermarks(text: str) -> Dict[str, Any]:
+    """
+    Check for advanced AI watermarks using NLP and embeddings.
+    Requires spaCy and sentence-transformers.
+    
+    Based on: @docs/advanced-ai-watermark-detection.md
+    """
+    results = {
+        'pos_ngrams': {},
+        'embedding_clustering': None,
+        'semantic_drift': None,
+        'has_advanced_watermark': False,
+        'advanced_notes': []
+    }
+    
+    # 1. POS N-grams (spaCy)
+    try:
+        import spacy
+        nlp = spacy.load("en_core_web_sm")
+        doc = nlp(text)
+        pos_tags = [token.pos_ for token in doc]
+        
+        # Count bigrams
+        pos_bigrams = [tuple(pos_tags[i:i+2]) for i in range(len(pos_tags)-1)]
+        bigram_counts = Counter(pos_bigrams)
+        total_bigrams = sum(bigram_counts.values())
+        
+        # Check for excessive noun-noun bigrams
+        nn_count = bigram_counts.get(("NOUN", "NOUN"), 0)
+        nn_ratio = nn_count / total_bigrams if total_bigrams > 0 else 0
+        results['pos_ngrams']['nn_ratio'] = nn_ratio
+        if nn_ratio > 0.1:
+            results['has_advanced_watermark'] = True
+            results['advanced_notes'].append(f"High noun-noun ratio ({nn_ratio:.3f})")
+        
+        # Check passive voice
+        passive_count = sum(1 for token in doc if token.dep_ == "auxpass")
+        verb_count = sum(1 for token in doc if token.pos_ == "VERB")
+        passive_ratio = passive_count / verb_count if verb_count > 0 else 0
+        results['pos_ngrams']['passive_ratio'] = passive_ratio
+        if passive_ratio > 0.3:
+            results['has_advanced_watermark'] = True
+            results['advanced_notes'].append(f"High passive voice ratio ({passive_ratio:.3f})")
+            
+        # Check adjective-noun ratio
+        adj_noun_count = bigram_counts.get(("ADJ", "NOUN"), 0)
+        adj_noun_ratio = adj_noun_count / total_bigrams if total_bigrams > 0 else 0
+        results['pos_ngrams']['adj_noun_ratio'] = adj_noun_ratio
+        if adj_noun_ratio > 0.15:
+            results['has_advanced_watermark'] = True
+            results['advanced_notes'].append(f"High adj-noun ratio ({adj_noun_ratio:.3f})")
+            
+        # Check determiner-noun ratio
+        det_noun_count = bigram_counts.get(("DET", "NOUN"), 0)
+        det_noun_ratio = det_noun_count / total_bigrams if total_bigrams > 0 else 0
+        results['pos_ngrams']['det_noun_ratio'] = det_noun_ratio
+        if det_noun_ratio > 0.20:
+            results['has_advanced_watermark'] = True
+            results['advanced_notes'].append(f"High det-noun ratio ({det_noun_ratio:.3f})")
+            
+    except ImportError:
+        results['advanced_notes'].append("spaCy not installed; POS checks skipped")
+    except Exception as e:
+        results['advanced_notes'].append(f"POS analysis error: {str(e)}")
+    
+    # 2. Embedding Clustering (sentence-transformers)
+    try:
+        from sentence_transformers import SentenceTransformer
+        from sklearn.metrics.pairwise import cosine_similarity
+        import numpy as np
+        
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        words = text.split()
+        chunks = [" ".join(words[i:i+500]) for i in range(0, len(words), 500)]
+        
+        if len(chunks) > 1:
+            embeddings = model.encode(chunks)
+            sim_matrix = cosine_similarity(embeddings)
+            np.fill_diagonal(sim_matrix, 0)
+            avg_sim = sim_matrix.mean()
+            results['embedding_clustering'] = avg_sim
+            # Human writing: avg_sim typically < 0.8
+            # AI writing: avg_sim typically > 0.85
+            if avg_sim > 0.85:
+                results['has_advanced_watermark'] = True
+                results['advanced_notes'].append(f"Tight embedding cluster (avg_sim={avg_sim:.3f})")
+    except ImportError:
+        results['advanced_notes'].append("sentence-transformers not installed; embedding checks skipped")
+    except Exception as e:
+        results['advanced_notes'].append(f"Embedding analysis error: {str(e)}")
+    
+    # 3. Semantic Drift
+    try:
+        from sentence_transformers import SentenceTransformer
+        from sklearn.metrics.pairwise import cosine_similarity
+        import numpy as np
+        
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        
+        # Extract topic from first 3 sentences
+        sentences = re.split(r'[.!?]+', text)
+        topic_sentences = sentences[:3]
+        topic = " ".join([s.strip() for s in topic_sentences if s.strip()])
+        
+        if topic:
+            topic_embedding = model.encode([topic])
+            words = text.split()
+            chunks = [" ".join(words[i:i+500]) for i in range(0, len(words), 500)]
+            chunk_embeddings = model.encode(chunks)
+            
+            similarities = cosine_similarity(chunk_embeddings, topic_embedding).flatten()
+            avg_sim = similarities.mean()
+            results['semantic_drift'] = avg_sim
+            # Human writing: avg_sim to topic typically 0.6-0.75
+            # AI writing: avg_sim to topic typically > 0.8
+            if avg_sim > 0.8:
+                results['has_advanced_watermark'] = True
+                results['advanced_notes'].append(f"Low semantic drift (avg_sim={avg_sim:.3f})")
+    except ImportError:
+        pass  # Already noted above
+    except Exception as e:
+        results['advanced_notes'].append(f"Semantic drift analysis error: {str(e)}")
+    
+    return results
+
+
+def check_file_for_watermarks(filepath: str, check_statistical: bool = True, check_advanced: bool = False) -> Dict[str, Any]:
     """
     Check a file for AI watermarks with improved detection logic.
+    
+    Args:
+        filepath: Path to the file to check
+        check_statistical: Whether to run statistical/structural checks (default: True)
+        check_advanced: Whether to run advanced NLP checks (default: False, requires spaCy/sentence-transformers)
+    
     Returns dict with detection results.
     """
     file_type = get_file_type(filepath)
@@ -511,6 +1034,41 @@ def check_file_for_watermarks(filepath: str) -> Dict[str, Any]:
                 f"in legitimate foreign language context, not watermarks"
             )
         
+        # =========================================================================
+        # NEW: Advanced AI Watermark Detection (Statistical & Structural)
+        # =========================================================================
+        
+        # Only run on text/markdown files with sufficient content
+        if check_statistical and file_type in ('text', 'svg', 'md') and len(content) > 100:
+            statistical_results = check_statistical_watermarks(content)
+            results.update(statistical_results)
+            
+            # Update overall has_watermark flag
+            if statistical_results.get('has_statistical_watermark'):
+                results['has_watermark'] = True
+            
+            # Merge notes
+            for note in statistical_results.get('statistical_notes', []):
+                if note not in results['notes']:
+                    results['notes'].append(note)
+        
+        # Run advanced checks if requested
+        if check_advanced and file_type in ('text', 'svg', 'md') and len(content) > 500:
+            try:
+                advanced_results = check_advanced_watermarks(content)
+                results.update(advanced_results)
+                
+                # Update overall has_watermark flag
+                if advanced_results.get('has_advanced_watermark'):
+                    results['has_watermark'] = True
+                
+                # Merge notes
+                for note in advanced_results.get('advanced_notes', []):
+                    if note not in results['notes']:
+                        results['notes'].append(note)
+            except Exception as e:
+                results['notes'].append(f"Advanced watermark check error: {str(e)}")
+        
         return results
     
     except Exception as e:
@@ -522,7 +1080,7 @@ def check_file_for_watermarks(filepath: str) -> Dict[str, Any]:
         }
 
 
-def scan_directory(directory: str, include_binary: bool = True) -> List[Dict[str, Any]]:
+def scan_directory(directory: str, include_binary: bool = True, check_statistical: bool = True, check_advanced: bool = False) -> List[Dict[str, Any]]:
     """Scan all files in a directory for AI watermarks."""
     results = []
     
@@ -534,7 +1092,7 @@ def scan_directory(directory: str, include_binary: bool = True) -> List[Dict[str
             if filepath.name == '.DS_Store':
                 continue
             
-            result = check_file_for_watermarks(str(filepath))
+            result = check_file_for_watermarks(str(filepath), check_statistical=check_statistical, check_advanced=check_advanced)
             
             # Always include files with findings
             if result.get('has_watermark'):
@@ -547,6 +1105,12 @@ def scan_directory(directory: str, include_binary: bool = True) -> List[Dict[str
                 results.append(result)
             # For binary files, include if we found JUMBF or other markers
             elif result.get('jumbf_found') or result.get('c2pa_brand_found'):
+                results.append(result)
+            # Include files with statistical findings
+            elif result.get('has_statistical_watermark'):
+                results.append(result)
+            # Include files with advanced findings
+            elif result.get('has_advanced_watermark'):
                 results.append(result)
     
     return results
@@ -602,6 +1166,126 @@ def print_results(findings: List[Dict[str, Any]], verbose: bool = False) -> None
             if verbose:
                 print(f"  HOMOGLYPHS (legitimate foreign text): {len(f['homoglyphs'])}")
         
+        # =========================================================================
+        # NEW: Statistical Watermark Findings
+        # =========================================================================
+        
+        # Sentence length statistics
+        if f.get('sentence_length_variance') is not None:
+            std_dev = f['sentence_length_variance']
+            avg_len = f.get('sentence_avg_length', 'N/A')
+            median_len = f.get('sentence_median_length', 'N/A')
+            flag = " [FLAG: low variance]" if f.get('has_statistical_watermark') and any("sentence length variance" in n for n in f.get('statistical_notes', [])) else ""
+            print(f"  SENTENCE STATS: avg={avg_len:.1f} words, median={median_len:.1f}, std_dev={std_dev:.1f}{flag}")
+        
+        # TTR and MATTR
+        if f.get('ttr') is not None:
+            ttr = f['ttr']
+            mattr = f.get('mattr', 'N/A')
+            flag = " [FLAG: low lexical diversity]" if f.get('has_statistical_watermark') and any("TTR" in n or "MATTR" in n for n in f.get('statistical_notes', [])) else ""
+            mattr_str = f"{mattr:.3f}" if isinstance(mattr, (int, float)) else mattr
+            print(f"  LEXICAL DIVERSITY: TTR={ttr:.3f}, MATTR={mattr_str}{flag}")
+        
+        # Heading hierarchy
+        if f.get('heading_hierarchy'):
+            headings = f['heading_hierarchy']
+            consistency = f.get('heading_hierarchy_consistency', 0)
+            flag = " [FLAG: perfect hierarchy]" if consistency == 0 and len(headings) > 3 else ""
+            print(f"  HEADING HIERARCHY: {len(headings)} headings, {consistency} issues{flag}")
+            if verbose:
+                for h in headings[:5]:
+                    print(f"    {h}")
+        
+        # List uniformity
+        if f.get('list_uniformity'):
+            uniformity = f['list_uniformity']
+            flag = " [FLAG: AI-like]" if uniformity == "uniform" else ""
+            print(f"  LIST UNIFORMITY: {uniformity}{flag}")
+        
+        # Code block tagging
+        if f.get('code_block_tagged_ratio') is not None:
+            ratio = f['code_block_tagged_ratio']
+            flag = " [FLAG: low tagging]" if ratio < 0.3 else ""
+            print(f"  CODE BLOCK TAGGING: {ratio:.2f}{flag}")
+        
+        # Unicode normalization
+        if f.get('unicode_normalization'):
+            norm = f['unicode_normalization']
+            flag = " [FLAG]" if norm != "normalized" else ""
+            print(f"  UNICODE NORMALIZATION: {norm}{flag}")
+        
+        # Bidi overrides
+        if f.get('bidi_overrides'):
+            bidi = f['bidi_overrides']
+            print(f"  BIDI OVERRIDES: {bidi} [FLAG]")
+        
+        # Math alphabetic characters
+        if f.get('math_alphabetic_chars'):
+            math_chars = f['math_alphabetic_chars']
+            print(f"  MATH ALPHABETIC CHARS: {[f'U+{ord(c):04X}' for c in math_chars]} [FLAG]")
+        
+        # Tag characters
+        if f.get('tag_characters'):
+            tag_chars = f['tag_characters']
+            print(f"  TAG CHARACTERS: {[f'U+{ord(c):06X}' for c in tag_chars]} [FLAG]")
+        
+        # Prompt leakage
+        if f.get('prompt_leakage'):
+            prompts = f['prompt_leakage']
+            print(f"  PROMPT LEAKAGE: {prompts[:3]} [FLAG]")
+        
+        # Token repetition
+        if f.get('token_repetition') and f['token_repetition']:
+            repeats = f['token_repetition']
+            common_phrases = {"of the", "in the", "to the", "with the", "for the"}
+            unusual = {k: v for k, v in repeats.items() if k not in common_phrases}
+            if unusual:
+                print(f"  TOKEN REPETITION: {list(unusual.keys())[:3]} [FLAG]")
+        
+        # EOS patterns
+        if f.get('eos_patterns'):
+            eos = f['eos_patterns']
+            print(f"  EOS PATTERNS: {eos} [FLAG]")
+        
+        # Markdown spacing
+        if f.get('markdown_spacing_issues') is not None:
+            issues = f['markdown_spacing_issues']
+            flag = " [FLAG: too perfect]" if issues == 0 and f.get('file_type') in ('text', 'md') and f.get('statistical_notes', []).count("Perfect markdown spacing") > 0 else ""
+            print(f"  MARKDOWN SPACING: {issues} issues{flag}")
+        
+        # =========================================================================
+        # NEW: Advanced Watermark Findings (spaCy, sentence-transformers)
+        # =========================================================================
+        
+        # POS n-grams
+        if f.get('pos_ngrams'):
+            pos = f['pos_ngrams']
+            flags = []
+            if pos.get('nn_ratio', 0) > 0.1:
+                flags.append(f"high NN ratio: {pos['nn_ratio']:.3f}")
+            if pos.get('passive_ratio', 0) > 0.3:
+                flags.append(f"high passive: {pos['passive_ratio']:.3f}")
+            if pos.get('adj_noun_ratio', 0) > 0.15:
+                flags.append(f"high ADJ-NOUN: {pos['adj_noun_ratio']:.3f}")
+            if pos.get('det_noun_ratio', 0) > 0.20:
+                flags.append(f"high DET-NOUN: {pos['det_noun_ratio']:.3f}")
+            if flags:
+                print(f"  POS NGRAMS: {', '.join(flags)} [FLAG]")
+            elif verbose:
+                print(f"  POS NGRAMS: nn={pos.get('nn_ratio', 0):.3f}, passive={pos.get('passive_ratio', 0):.3f}, adj-noun={pos.get('adj_noun_ratio', 0):.3f}, det-noun={pos.get('det_noun_ratio', 0):.3f}")
+        
+        # Embedding clustering
+        if f.get('embedding_clustering') is not None:
+            sim = f['embedding_clustering']
+            flag = " [FLAG: tight cluster]" if sim > 0.85 else ""
+            print(f"  EMBEDDING CLUSTERING: avg_sim={sim:.3f}{flag}")
+        
+        # Semantic drift
+        if f.get('semantic_drift') is not None:
+            drift = f['semantic_drift']
+            flag = " [FLAG: low drift]" if drift > 0.8 else ""
+            print(f"  SEMANTIC DRIFT: avg_sim_to_topic={drift:.3f}{flag}")
+        
         # Notes
         if f.get('notes'):
             for note in f['notes']:
@@ -626,6 +1310,8 @@ Examples:
   python3 ai_watermark_scanner.py /path/to/directory
   python3 ai_watermark_scanner.py --verbose file.svg
   python3 ai_watermark_scanner.py --binary-check image.png
+  python3 ai_watermark_scanner.py --advanced /path/to/check
+  python3 ai_watermark_scanner.py --no-statistical file.md
         """
     )
     parser.add_argument(
@@ -649,21 +1335,49 @@ Examples:
         action='store_true',
         help='Output results as JSON'
     )
+    parser.add_argument(
+        '-s', '--statistical',
+        action='store_true',
+        default=True,
+        help='Run statistical and structural watermark checks (default: True)'
+    )
+    parser.add_argument(
+        '--no-statistical',
+        action='store_true',
+        default=False,
+        help='Skip statistical and structural watermark checks'
+    )
+    parser.add_argument(
+        '-a', '--advanced',
+        action='store_true',
+        default=False,
+        help='Run advanced watermark checks (requires spaCy and sentence-transformers)'
+    )
     
     args = parser.parse_args()
     
+    # Resolve statistical flag: on by default, off if --no-statistical
+    check_statistical = not args.no_statistical
+    
     print(f"Scanning: {args.target}")
+    if args.advanced:
+        print("  [Advanced checks: ENABLED (requires spaCy, sentence-transformers)]")
+    if check_statistical:
+        print("  [Statistical checks: ENABLED]")
+    else:
+        print("  [Statistical checks: DISABLED]")
+    print()
     
     if os.path.isfile(args.target):
         # Single file check
         if args.binary_check or args.target.lower().endswith(('.png', '.jpg', '.jpeg')):
             # Force binary check
-            findings = [check_file_for_watermarks(args.target)]
+            findings = [check_file_for_watermarks(args.target, check_statistical=False, check_advanced=False)]
         else:
-            findings = [check_file_for_watermarks(args.target)]
+            findings = [check_file_for_watermarks(args.target, check_statistical=check_statistical, check_advanced=args.advanced)]
     else:
         # Directory scan
-        findings = scan_directory(args.target)
+        findings = scan_directory(args.target, check_statistical=check_statistical, check_advanced=args.advanced)
     
     if args.json:
         import json
@@ -673,6 +1387,10 @@ Examples:
     
     # Return exit code: 0 = no watermarks, 1 = watermarks found
     if any(f.get('has_watermark', False) for f in findings):
+        sys.exit(1)
+    elif any(f.get('has_statistical_watermark', False) for f in findings):
+        sys.exit(1)
+    elif any(f.get('has_advanced_watermark', False) for f in findings):
         sys.exit(1)
     else:
         sys.exit(0)

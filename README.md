@@ -171,6 +171,34 @@ This guide focuses on **technical detection** of watermarks, not disclosure requ
 
 **Detection**: Simple string search for attribution markers.
 
+### Method 5: Statistical and Structural AI Fingerprints (NEW)
+
+**What to Look For**: Patterns in AI-generated text that differ from human writing:
+
+**Statistical Patterns**:
+- **Low sentence length variance**: AI tends to produce more uniform sentence lengths
+- **Low Type-Token Ratio (TTR)**: AI uses more predictable/repetitive word choices
+- **Unusual POS tag sequences**: Excessive noun-noun compounds, passive voice, etc.
+
+**Structural Patterns** (Markdown):
+- **Perfect heading hierarchy**: AI-generated markdown often has perfectly nested headings (H1→H2→H3)
+- **Uniform list markers**: AI consistently uses one bullet type (-, *, +) throughout
+- **Low code block tagging**: AI often omits language specifiers in code blocks
+- **Perfect spacing**: AI-generated markdown has no spacing errors around syntax
+
+**Unicode Patterns**:
+- **Non-NFC normalization**: AI might use decomposed Unicode forms
+- **Mathematical alphabetic characters**: Invisible Unicode characters that look like letters
+- **Bidirectional overrides**: Unicode control characters that reorder text
+- **Tag characters**: Unicode tags (U+E0000-U+E007F) used for metadata
+
+**AI Artifact Patterns**:
+- **Prompt leakage**: Remnants of the generation prompt in the text
+- **Token repetition**: Unusual repetition of 2-3 word sequences
+- **EOS token patterns**: Partial stop sequences from model training
+
+**Detection**: Use the `ai_watermark_scanner.py` script with statistical checks enabled (default).
+
 ---
 
 ## Technical Implementation
@@ -192,9 +220,16 @@ python3 ai_watermark_scanner.py /path/to/directory
 python3 ai_watermark_scanner.py --verbose file.svg
 python3 ai_watermark_scanner.py --binary-check image.png
 python3 ai_watermark_scanner.py --json /path/to/scan
+python3 ai_watermark_scanner.py --advanced /path/to/scan  # Enable POS tagging and embedding analysis
+python3 ai_watermark_scanner.py --no-statistical file.md  # Disable statistical checks
 ```
 
 The script provides detailed JSON or human-readable output with all detection findings.
+
+**Advanced Detection Features** (v1.1.0+):
+- **Statistical checks** (enabled by default): Sentence length variance, TTR/MATTR, heading hierarchy, list uniformity, and more
+- **Advanced NLP checks** (`--advanced` flag): POS tag n-gram analysis, embedding clustering, semantic drift detection (requires spaCy and sentence-transformers)
+- **Comprehensive Unicode checks**: Normalization forms, mathematical alphabetic characters, bidirectional overrides, tag characters
 
 ### Shell: Quick Check Commands
 
@@ -264,11 +299,14 @@ find . -name "*.md" -o -name "*.html" -o -name "*.txt" | \
 git log --since="2026-08-02" --name-only --pretty=format: | sort -u
 ```
 
-### Step 2: Check Text Files for Zero-Width Characters
+### Step 2: Check Text Files for Zero-Width Characters and Statistical Fingerprints
 
 ```bash
-# Using the ai_watermark_scanner.py script
+# Using the ai_watermark_scanner.py script (includes statistical checks by default)
 python3 ai_watermark_scanner.py /path/to/content
+
+# With advanced NLP checks (requires spaCy and sentence-transformers)
+python3 ai_watermark_scanner.py --advanced /path/to/content
 
 # Or check individual files
 python3 -c "
@@ -402,10 +440,15 @@ Create a compliance report:
 - Digital signature references
 - Explicit AI attribution metadata
 - Homoglyph substitution from Cyrillic and Greek scripts
+- **Statistical AI fingerprints**: Sentence length variance, TTR/MATTR, POS tag patterns
+- **Structural AI fingerprints**: Markdown heading hierarchy, list uniformity, code block tagging
+- **Unicode AI fingerprints**: Normalization forms, mathematical alphabetic characters, bidirectional overrides
+- **AI artifact fingerprints**: Prompt leakage, token repetition, EOS token patterns
 
 **What we CANNOT detect**:
-- Statistical patterns in text (require Anthropic's algorithm)
+- Proprietary statistical watermarks (require provider-specific algorithms)
 - Future undocumented watermarking schemes
+- Statistical patterns without sufficient text length (<100 words typically)
 
 ---
 
@@ -495,6 +538,9 @@ This workflow ensures:
 2. **Detection Tools**
    - [ExifTool](https://exiftool.org/) - Metadata extraction
    - [C2PA Viewer](https://c2paviewer.com/) - Provenance verification
+
+3. **Advanced Detection Documentation**
+   - See `@docs/advanced-ai-watermark-detection.md` for comprehensive coverage of statistical, structural, semantic, and Unicode-based detection techniques
 
 ### Related Standards
 

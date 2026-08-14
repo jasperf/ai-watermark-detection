@@ -7,12 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.1] - 2026-08-14
+## [1.1.0] - 2026-08-14
+
+### Added
+- **Advanced AI watermark detection** based on statistical, structural, semantic, and Unicode patterns
+- **Statistical analysis**: Sentence length variance, Type-Token Ratio (TTR), Moving-Average TTR (MATTR)
+- **Structural analysis**: Markdown heading hierarchy consistency, list marker uniformity, code block language tagging, markdown spacing patterns
+- **Unicode analysis**: Normalization form detection (NFC vs NFD), mathematical alphabetic characters, bidirectional override detection, tag characters
+- **AI artifact detection**: Prompt leakage patterns, token repetition, EOS token patterns
+- **POS tag n-gram analysis** (requires spaCy): Detects unusual part-of-speech sequences common in AI-generated text
+- **Embedding clustering** (requires sentence-transformers): Detects tight semantic clustering typical of AI-generated content
+- **Semantic drift analysis** (requires sentence-transformers): Measures topic consistency vs human writing
+- `--advanced` flag to enable NLP-based checks (spaCy, sentence-transformers)
+- `--no-statistical` flag to disable statistical/structural checks
 
 ### Changed
 - Updated README.md to reference standalone `ai_watermark_scanner.py` script instead of inline code
 - Removed embedded Python script from README.md Technical Implementation section
 - Updated all script references from `scanner.py` to `ai_watermark_scanner.py`
+
+### Documentation
+- Added comprehensive documentation in `@docs/advanced-ai-watermark-detection.md` covering:
+  - 15+ detection techniques across statistical, semantic, structural, and Unicode categories
+  - Implementation examples with code snippets
+  - Priority recommendations for different use cases
+  - Threshold tuning guidelines
+  - False positive mitigation strategies
+  - Integration patterns with existing scanner
 
 ---
 

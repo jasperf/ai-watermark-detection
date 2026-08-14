@@ -533,12 +533,12 @@ This workflow ensures:
 
 2. **Detection Tools**
    - [ExifTool](https://exiftool.org/) - Metadata extraction
-   - [C2PA Validator](https://c2pa.org/validator/) - Provenance verification
+   - [C2PA Viewer](https://c2paviewer.com/) - Provenance verification
 
 ### Related Standards
 
-- [ISO/IEC 23026](https://www.iso.org/standard/83957.html) - AI transparency standards
-- [W3C Provenance](https://www.w3.org/2001/sw/wiki/Provenance) - Web provenance standards
+- [ISO/IEC 12792:2025](https://www.iso.org/standard/84111.html) - AI transparency taxonomy standard
+- [W3C PROV Overview](https://www.w3.org/TR/prov-overview/) - Web provenance standards
 
 ---
 

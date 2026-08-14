@@ -177,181 +177,24 @@ This guide focuses on **technical detection** of watermarks, not disclosure requ
 
 ### Python: Comprehensive Watermark Scanner
 
-```python
-import os
-from pathlib import Path
+For comprehensive scanning, use the standalone `ai_watermark_scanner.py` script included in this repository. This improved scanner includes:
 
-# Zero-width characters per DeepSeek analysis
-ZERO_WIDTH_CHARS = ['\u200B', '\u200C', '\u200D', '\u2060', '\uFEFF']
-VARIATION_SELECTORS = [chr(i) for i in range(0xFE00, 0xFE10)]
+- **Zero-width character detection** (U+200B, U+200C, U+200D, U+2060, U+FEFF, U+FE00-U+FE0F)
+- **C2PA metadata detection** with specific structural markers (namespaces, manifests, signatures)
+- **Binary file support** for PNG and JPG images (JUMBF format detection)
+- **Context-aware homoglyph detection** to avoid false positives on legitimate foreign language content
+- **SVG and XML file support**
+- **Directory scanning** capability
 
-# C2PA markers
-C2PA_INDICATORS = ['<metadata', 'c2pa:', 'provenance', 'signature', 'xmp:']
-
-# Homoglyph detection: common Latin lookalikes from other scripts
-HOMOGLYPH_MAP = {
-    # Cyrillic homoglyphs
-    '\u0430': 'a',  # а -> a
-    '\u0431': 'b',  # б -> b
-    '\u0432': 'v',  # в -> v
-    '\u0433': 'g',  # г -> g
-    '\u0434': 'd',  # д -> d
-    '\u0435': 'e',  # е -> e
-    '\u0436': 'zh', # ж -> zh
-    '\u0437': 'z',  # з -> z
-    '\u0438': 'i',  # и -> i
-    '\u0439': 'i',  # й -> i
-    '\u043A': 'k',  # к -> k
-    '\u043B': 'l',  # л -> l
-    '\u043C': 'm',  # м -> m
-    '\u043D': 'n',  # н -> n
-    '\u043E': 'o',  # о -> o
-    '\u043F': 'p',  # п -> p
-    '\u0440': 'r',  # р -> r
-    '\u0441': 's',  # с -> s
-    '\u0442': 't',  # т -> t
-    '\u0443': 'u',  # у -> u
-    '\u0444': 'f',  # ф -> f
-    '\u0445': 'h',  # х -> h
-    '\u0446': 'c',  # ц -> c
-    '\u0447': 'ch', # ч -> ch
-    '\u0448': 'sh', # ш -> sh
-    '\u0449': 'sh', # щ -> sh
-    '\u044A': '',   # ъ -> (hard sign)
-    '\u044B': 'y',  # ы -> y
-    '\u044C': '',   # ь -> (soft sign)
-    '\u044D': 'e',  # э -> e
-    '\u044E': 'yu', # ю -> yu
-    '\u044F': 'ya', # я -> ya
-    # Greek homoglyphs
-    '\u03B1': 'a',  # α -> a
-    '\u03B2': 'b',  # β -> b
-    '\u03B3': 'g',  # γ -> g
-    '\u03B4': 'd',  # δ -> d
-    '\u03B5': 'e',  # ε -> e
-    '\u03B6': 'z',  # ζ -> z
-    '\u03B7': 'h',  # η -> h
-    '\u03B8': 'th', # θ -> th
-    '\u03B9': 'i',  # ι -> i
-    '\u03BA': 'k',  # κ -> k
-    '\u03BB': 'l',  # λ -> l
-    '\u03BC': 'm',  # μ -> m
-    '\u03BD': 'n',  # ν -> n
-    '\u03BE': 'x',  # ξ -> x
-    '\u03BF': 'o',  # ο -> o
-    '\u03C0': 'p',  # π -> p
-    '\u03C1': 'r',  # ρ -> r
-    '\u03C2': 's',  # ς -> s
-    '\u03C3': 's',  # σ -> s
-    '\u03C4': 't',  # τ -> t
-    '\u03C5': 'u',  # υ -> u
-    '\u03C6': 'f',  # φ -> f
-    '\u03C7': 'ch', # χ -> ch
-    '\u03C8': 'ps', # ψ -> ps
-    '\u03C9': 'w',  # ω -> w
-}
-
-def check_file_for_watermarks(filepath):
-    """
-    Check a file for AI watermarks.
-    Returns dict with detection results.
-    """
-    try:
-        with open(filepath, 'rb') as f:
-            raw = f.read()
-        
-        # Try UTF-8 first, fall back to latin-1
-        try:
-            content = raw.decode('utf-8')
-        except UnicodeDecodeError:
-            content = raw.decode('latin-1', errors='replace')
-        
-        results = {
-            'file': filepath,
-            'size': len(raw),
-            'zero_width': {},
-            'variation_selectors': 0,
-            'c2pa_metadata': False,
-            'c2pa_indicators': [],
-            'homoglyphs': [],
-            'has_watermark': False
-        }
-        
-        # Check zero-width characters
-        for char in ZERO_WIDTH_CHARS:
-            count = content.count(char)
-            if count > 0:
-                results['zero_width'][f'U+{ord(char):04X}'] = count
-                results['has_watermark'] = True
-        
-        # Check variation selectors
-        for char in VARIATION_SELECTORS:
-            count = content.count(char)
-            if count > 0:
-                results['variation_selectors'] += count
-                results['has_watermark'] = True
-        
-        # Check C2PA indicators
-        for indicator in C2PA_INDICATORS:
-            if indicator in content.lower():
-                results['c2pa_indicators'].append(indicator)
-                results['c2pa_metadata'] = True
-                results['has_watermark'] = True
-        
-        # Check for homoglyph substitution
-        for i, char in enumerate(content):
-            if char in HOMOGLYPH_MAP:
-                latin_equiv = HOMOGLYPH_MAP[char]
-                results['homoglyphs'].append({
-                    'char': char,
-                    'codepoint': f'U+{ord(char):04X}',
-                    'latin_equivalent': latin_equiv,
-                    'position': i
-                })
-                results['has_watermark'] = True
-        
-        return results
-        
-    except Exception as e:
-        return {'file': filepath, 'error': str(e)}
-
-
-# Scan a directory
-def scan_directory(directory):
-    """Scan all files in a directory for AI watermarks."""
-    results = []
-    for filepath in Path(directory).rglob('*'):
-        if filepath.is_file() and not filepath.name.startswith('.'):
-            result = check_file_for_watermarks(str(filepath))
-            if result.get('has_watermark') or 'error' in result:
-                results.append(result)
-    return results
-
-
-# Usage
-if __name__ == '__main__':
-    import sys
-    target = sys.argv[1] if len(sys.argv) > 1 else '.'
-    
-    print(f"Scanning: {target}")
-    findings = scan_directory(target)
-    
-    if findings:
-        print(f"\nFound {len(findings)} files with potential watermarks:")
-        for f in findings:
-            print(f"\n  {f['file']}")
-            if 'zero_width' in f and f['zero_width']:
-                print(f"    Zero-width chars: {f['zero_width']}")
-            if f.get('variation_selectors', 0) > 0:
-                print(f"    Variation selectors: {f['variation_selectors']}")
-            if f.get('c2pa_metadata'):
-                print(f"    C2PA indicators: {f['c2pa_indicators']}")
-            if f.get('homoglyphs'):
-                for h in f['homoglyphs']:
-                    print(f"    Homoglyph: {h['char']} ({h['codepoint']}) -> '{h['latin_equivalent']}' at pos {h['position']}")
-    else:
-        print("No watermarks detected")
+**Usage**:
+```bash
+python3 ai_watermark_scanner.py /path/to/directory
+python3 ai_watermark_scanner.py --verbose file.svg
+python3 ai_watermark_scanner.py --binary-check image.png
+python3 ai_watermark_scanner.py --json /path/to/scan
 ```
+
+The script provides detailed JSON or human-readable output with all detection findings.
 
 ### Shell: Quick Check Commands
 
@@ -424,8 +267,8 @@ git log --since="2026-08-02" --name-only --pretty=format: | sort -u
 ### Step 2: Check Text Files for Zero-Width Characters
 
 ```bash
-# Using the Python scanner above
-python3 scanner.py /path/to/content
+# Using the ai_watermark_scanner.py script
+python3 ai_watermark_scanner.py /path/to/content
 
 # Or check individual files
 python3 -c "

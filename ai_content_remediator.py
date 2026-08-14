@@ -106,27 +106,69 @@ def detect_html_comments(content: str) -> List[Tuple[int, int, str]]:
 
 
 def remove_html_comments(content: str) -> str:
-    """Remove all HTML comments from content."""
-    return re.sub(r'^\s*<!--.*?-->\s*$', '', content, flags=re.MULTILINE)
+    """Remove HTML comments from content, preserving WordPress block delimiters."""
+    # WordPress block comments that must be preserved
+    # Pattern: <!-- wp:blockname ...--> or <!-- /wp:blockname ...-->
+    # Note: Use non-greedy match but also handle JSON attributes in wp:group etc.
+    WP_BLOCK_PATTERN = re.compile(
+        r'<!--\s*wp:\w+(?:\s*\{.*?\})?\s*-->|<!--\s*/wp:\w+\s*-->',
+        re.DOTALL
+    )
+    
+    # Find all WordPress block comments and protect them
+    protected = []
+    # Use a more careful approach - scan for all <!-- ... --> comments
+    # and identify which ones are WordPress blocks
+    all_comments = list(re.finditer(r'<!--.*?-->', content, re.DOTALL))
+    
+    for match in all_comments:
+        comment_text = match.group()
+        # Check if this is a WordPress block comment
+        if re.match(r'^\s*<!--\s*(wp:|/wp:)', comment_text):
+            protected.append((match.start(), match.end(), comment_text))
+    
+    # Replace protected blocks with placeholders
+    placeholder_map = {}
+    protected_content = content
+    # Sort by position in reverse order so we can replace from end to start
+    protected.sort(key=lambda x: x[0], reverse=True)
+    for i, (start, end, text) in enumerate(protected):
+        placeholder = f'__WP_BLOCK_PLACEHOLDER_{i}__'
+        protected_content = protected_content[:start] + placeholder + protected_content[end:]
+        placeholder_map[placeholder] = text
+    
+    # Remove all remaining HTML comments (non-WP blocks)
+    # Use a pattern that matches <!-- ... --> but not our placeholders
+    cleaned = re.sub(r'<!--(?!__WP_BLOCK_PLACEHOLDER_\d+__).*?-->', '', protected_content, flags=re.DOTALL)
+    
+    # Restore WordPress block comments
+    for placeholder, original in placeholder_map.items():
+        cleaned = cleaned.replace(placeholder, original)
+    
+    return cleaned
 
 
-def clean_html_comments(content: str, verbose: bool = False, remove: bool = False) -> Tuple[str, int]:
+def clean_html_comments(content: str, verbose: bool = False, remove: bool = False, wp_aware: bool = True) -> Tuple[str, int]:
     """
     Clean HTML comment blocks.
     
     Strategy:
-    - If remove=True: Remove all HTML comments
+    - If remove=True: Remove all HTML comments (except WordPress blocks if wp_aware)
     - Otherwise: Reformat them properly
     
     Returns (cleaned_content, num_changes)
     """
     if remove:
-        cleaned = remove_html_comments(content)
-        # Count how many lines were removed
-        changes = content.count('<!--')
+        if wp_aware:
+            cleaned = remove_html_comments(content)
+        else:
+            # Remove ALL comments including WordPress blocks
+            cleaned = re.sub(r'<!--.*?-->', '', content, flags=re.DOTALL)
         # Clean up multiple blank lines
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         cleaned = cleaned.strip() + '\n'
+        # Count how many comment blocks were removed
+        changes = content.count('<!--') - (cleaned.count('<!-- wp:') if wp_aware else 0)
         return cleaned, changes
     
     lines = content.split('\n')
@@ -472,7 +514,7 @@ def preserve_internal_notes(content: str) -> Tuple[str, List[str]]:
 # MAIN REMEDIATION FUNCTION
 # =============================================================================
 
-def remediate_content(content: str, verbose: bool = False, remove_comments: bool = False) -> Tuple[str, dict]:
+def remediate_content(content: str, verbose: bool = False, remove_comments: bool = False, wp_aware: bool = True) -> Tuple[str, dict]:
     """
     Apply all remediation fixes to content.
     
@@ -484,7 +526,8 @@ def remediate_content(content: str, verbose: bool = False, remove_comments: bool
         'spacing_normalized': 0,
         'token_repetitions_found': [],
         'prompt_leakage_found': [],
-        'internal_notes_preserved': 0
+        'internal_notes_preserved': 0,
+        'wp_blocks_preserved': 0
     }
     
     # Step 1: Preserve internal notes
@@ -492,8 +535,11 @@ def remediate_content(content: str, verbose: bool = False, remove_comments: bool
     report['internal_notes_preserved'] = len(notes_sections)
     
     # Step 2: Clean HTML comments (or remove them)
-    content, cleaned_count = clean_html_comments(content, verbose, remove=remove_comments)
+    content, cleaned_count = clean_html_comments(content, verbose, remove=remove_comments, wp_aware=wp_aware)
     report['html_comments_cleaned'] = cleaned_count
+    if wp_aware:
+        # Count WordPress blocks preserved
+        report['wp_blocks_preserved'] = content.count('<!-- wp:')
     
     # Step 3: Normalize markdown spacing
     content, spacing_count = normalize_markdown_spacing(content, verbose)
@@ -541,6 +587,10 @@ Examples:
                         help='Skip HTML comment cleaning')
     parser.add_argument('--remove-comments', action='store_true',
                         help='Remove HTML comments entirely (instead of cleaning)')
+    parser.add_argument('--wp-aware', action='store_true', default=True,
+                        help='Preserve WordPress block delimiters when cleaning comments (default: True)')
+    parser.add_argument('--no-wp-aware', action='store_false', dest='wp_aware',
+                        help='Do NOT preserve WordPress block delimiters')
     
     args = parser.parse_args()
     
@@ -559,22 +609,24 @@ Examples:
     
     # Apply remediation
     remove_comments = args.remove_comments
+    wp_aware = args.wp_aware
     
     remediated_content, report = remediate_content(
         original_content, 
         verbose=args.verbose,
-        remove_comments=remove_comments
+        remove_comments=remove_comments,
+        wp_aware=wp_aware
     )
     
     # If --no-spacing, revert spacing normalization
     if args.no_spacing:
         # Re-run without spacing normalization
         if remove_comments:
-            content_no_spacing = remove_html_comments(original_content)
+            content_no_spacing = remove_html_comments(original_content) if wp_aware else re.sub(r'<!--.*?-->', '', original_content, flags=re.DOTALL)
         else:
-            content_no_spacing, _ = clean_html_comments(original_content, False)
+            content_no_spacing, _ = clean_html_comments(original_content, False, wp_aware=wp_aware)
         remediated_content, report_no_spacing = remediate_content(
-            content_no_spacing, verbose=args.verbose, remove_comments=remove_comments
+            content_no_spacing, verbose=args.verbose, remove_comments=remove_comments, wp_aware=wp_aware
         )
         report_no_spacing['spacing_normalized'] = 0
         report = report_no_spacing
@@ -584,7 +636,7 @@ Examples:
         # Re-run without comment cleaning
         content_no_comments, _ = normalize_markdown_spacing(original_content, False)
         remediated_content, report_no_comments = remediate_content(
-            content_no_comments, verbose=args.verbose, remove_comments=False
+            content_no_comments, verbose=args.verbose, remove_comments=False, wp_aware=wp_aware
         )
         report_no_comments['html_comments_cleaned'] = 0
         report = report_no_comments
@@ -624,6 +676,8 @@ Examples:
     print(f"  HTML comments cleaned: {report['html_comments_cleaned']}")
     print(f"  Markdown spacing normalized: {report['spacing_normalized']}")
     print(f"  Internal notes preserved: {report['internal_notes_preserved']}")
+    if report.get('wp_blocks_preserved', 0) > 0:
+        print(f"  WordPress blocks preserved: {report['wp_blocks_preserved']}")
     
     if report['token_repetitions_found']:
         print(f"\n  Token repetitions found ({len(report['token_repetitions_found'])}):")

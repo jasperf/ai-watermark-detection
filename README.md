@@ -231,6 +231,28 @@ The script provides detailed JSON or human-readable output with all detection fi
 - **Advanced NLP checks** (`--advanced` flag): POS tag n-gram analysis, embedding clustering, semantic drift detection (requires spaCy and sentence-transformers)
 - **Comprehensive Unicode checks**: Normalization forms, mathematical alphabetic characters, bidirectional overrides, tag characters
 
+### Python: AI Content Remediator (NEW v1.2.0)
+
+For fixing common AI-generated content issues detected by the scanner, use the `ai_content_remediator.py` script. This tool can automatically remediate several issues:
+
+- **HTML/XML comment removal**: Clean up metadata comments with `--remove-comments`
+- **Markdown spacing normalization**: Ensure consistent spacing between headings, paragraphs, lists, etc.
+- **Token repetition detection**: Identify unusually repetitive word sequences for manual review
+- **Prompt leakage detection**: Flag AI prompt patterns for manual review
+- **Internal notes preservation**: Automatically preserve sections marked with `## Internal notes`
+
+**Usage**:
+```bash
+python3 ai_content_remediator.py input.md                    # Show diff of changes
+python3 ai_content_remediator.py input.md --diff              # Show diff explicitly
+python3 ai_content_remediator.py input.md --in-place           # Overwrite file
+python3 ai_content_remediator.py input.md output.md          # Save to new file
+python3 ai_content_remediator.py input.md --remove-comments  # Remove HTML comments
+python3 ai_content_remediator.py input.md --verbose           # Detailed output
+```
+
+The remediator works non-destructively by default, showing a diff of proposed changes before applying them.
+
 ### Shell: Quick Check Commands
 
 ```bash
@@ -541,6 +563,9 @@ This workflow ensures:
 
 3. **Advanced Detection Documentation**
    - See `@docs/advanced-ai-watermark-detection.md` for comprehensive coverage of statistical, structural, semantic, and Unicode-based detection techniques
+
+4. **Remediation Documentation**
+   - Use `ai_content_remediator.py` for automated cleanup of AI-generated content artifacts
 
 ### Related Standards
 

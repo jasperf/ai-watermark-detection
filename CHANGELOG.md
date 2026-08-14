@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-08-14
+
+### Added
+- **AI Content Remediator script** (`ai_content_remediator.py`) for automatically fixing common AI-generated content issues:
+  - Remove HTML/XML comment blocks with `--remove-comments` flag
+  - Normalize markdown spacing between elements (headings, paragraphs, lists, etc.)
+  - Detect token repetition patterns for manual review
+  - Detect prompt leakage patterns for manual review
+  - Preserve internal notes sections marked with `## Internal notes`
+- **Test files** for remediator validation:
+  - `test_files/remediator_html_comments.md`
+  - `test_files/remediator_spacing.md`
+  - `test_files/remediator_token_repetition.md`
+  - `test_files/remediator_internal_notes.md`
+
+---
+
 ## [1.1.0] - 2026-08-14
 
 ### Added

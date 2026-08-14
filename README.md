@@ -188,6 +188,69 @@ VARIATION_SELECTORS = [chr(i) for i in range(0xFE00, 0xFE10)]
 # C2PA markers
 C2PA_INDICATORS = ['<metadata', 'c2pa:', 'provenance', 'signature', 'xmp:']
 
+# Homoglyph detection: common Latin lookalikes from other scripts
+HOMOGLYPH_MAP = {
+    # Cyrillic homoglyphs
+    '\u0430': 'a',  # а -> a
+    '\u0431': 'b',  # б -> b
+    '\u0432': 'v',  # в -> v
+    '\u0433': 'g',  # г -> g
+    '\u0434': 'd',  # д -> d
+    '\u0435': 'e',  # е -> e
+    '\u0436': 'zh', # ж -> zh
+    '\u0437': 'z',  # з -> z
+    '\u0438': 'i',  # и -> i
+    '\u0439': 'i',  # й -> i
+    '\u043A': 'k',  # к -> k
+    '\u043B': 'l',  # л -> l
+    '\u043C': 'm',  # м -> m
+    '\u043D': 'n',  # н -> n
+    '\u043E': 'o',  # о -> o
+    '\u043F': 'p',  # п -> p
+    '\u0440': 'r',  # р -> r
+    '\u0441': 's',  # с -> s
+    '\u0442': 't',  # т -> t
+    '\u0443': 'u',  # у -> u
+    '\u0444': 'f',  # ф -> f
+    '\u0445': 'h',  # х -> h
+    '\u0446': 'c',  # ц -> c
+    '\u0447': 'ch', # ч -> ch
+    '\u0448': 'sh', # ш -> sh
+    '\u0449': 'sh', # щ -> sh
+    '\u044A': '',   # ъ -> (hard sign)
+    '\u044B': 'y',  # ы -> y
+    '\u044C': '',   # ь -> (soft sign)
+    '\u044D': 'e',  # э -> e
+    '\u044E': 'yu', # ю -> yu
+    '\u044F': 'ya', # я -> ya
+    # Greek homoglyphs
+    '\u03B1': 'a',  # α -> a
+    '\u03B2': 'b',  # β -> b
+    '\u03B3': 'g',  # γ -> g
+    '\u03B4': 'd',  # δ -> d
+    '\u03B5': 'e',  # ε -> e
+    '\u03B6': 'z',  # ζ -> z
+    '\u03B7': 'h',  # η -> h
+    '\u03B8': 'th', # θ -> th
+    '\u03B9': 'i',  # ι -> i
+    '\u03BA': 'k',  # κ -> k
+    '\u03BB': 'l',  # λ -> l
+    '\u03BC': 'm',  # μ -> m
+    '\u03BD': 'n',  # ν -> n
+    '\u03BE': 'x',  # ξ -> x
+    '\u03BF': 'o',  # ο -> o
+    '\u03C0': 'p',  # π -> p
+    '\u03C1': 'r',  # ρ -> r
+    '\u03C2': 's',  # ς -> s
+    '\u03C3': 's',  # σ -> s
+    '\u03C4': 't',  # τ -> t
+    '\u03C5': 'u',  # υ -> u
+    '\u03C6': 'f',  # φ -> f
+    '\u03C7': 'ch', # χ -> ch
+    '\u03C8': 'ps', # ψ -> ps
+    '\u03C9': 'w',  # ω -> w
+}
+
 def check_file_for_watermarks(filepath):
     """
     Check a file for AI watermarks.
@@ -210,6 +273,7 @@ def check_file_for_watermarks(filepath):
             'variation_selectors': 0,
             'c2pa_metadata': False,
             'c2pa_indicators': [],
+            'homoglyphs': [],
             'has_watermark': False
         }
         
@@ -232,6 +296,18 @@ def check_file_for_watermarks(filepath):
             if indicator in content.lower():
                 results['c2pa_indicators'].append(indicator)
                 results['c2pa_metadata'] = True
+                results['has_watermark'] = True
+        
+        # Check for homoglyph substitution
+        for i, char in enumerate(content):
+            if char in HOMOGLYPH_MAP:
+                latin_equiv = HOMOGLYPH_MAP[char]
+                results['homoglyphs'].append({
+                    'char': char,
+                    'codepoint': f'U+{ord(char):04X}',
+                    'latin_equivalent': latin_equiv,
+                    'position': i
+                })
                 results['has_watermark'] = True
         
         return results
@@ -270,6 +346,9 @@ if __name__ == '__main__':
                 print(f"    Variation selectors: {f['variation_selectors']}")
             if f.get('c2pa_metadata'):
                 print(f"    C2PA indicators: {f['c2pa_indicators']}")
+            if f.get('homoglyphs'):
+                for h in f['homoglyphs']:
+                    print(f"    Homoglyph: {h['char']} ({h['codepoint']}) -> '{h['latin_equivalent']}' at pos {h['position']}")
     else:
         print("No watermarks detected")
 ```
@@ -294,6 +373,22 @@ for char in zws:
 
 # Check for C2PA in SVG files
 find . -name "*.svg" -type f -exec grep -l "<metadata\|c2pa:" {} \;
+
+# Check for homoglyph substitution (Cyrillic and Greek characters that look like Latin)
+python3 -c "
+import sys, re
+with open(sys.argv[1], 'rb') as f:
+    content = f.read().decode('utf-8', errors='replace')
+# Common homoglyph Unicode ranges: Cyrillic (0400-04FF), Greek (0370-03FF)
+homoglyph_pattern = re.compile(r'[\u0400-\u04FF\u0370-\u03FF]')
+matches = [(m.group(), f'U+{ord(m.group()):04X}') for m in homoglyph_pattern.finditer(content)]
+if matches:
+    print(f'Homoglyphs found in {sys.argv[1]}:')
+    for char, code in matches:
+        print(f'  {char} ({code})')
+else:
+    print(f'No homoglyphs found in {sys.argv[1]}')
+" example.md
 ```
 
 ### Using `exiftool` (For Image Files)
@@ -358,7 +453,26 @@ find . -name "*.svg" -type f -exec grep -l "<metadata\|c2pa:" {} \;
 exiftool -ext png -ext jpg -C2PA -G -a .
 ```
 
-### Step 4: Check for Explicit AI Attribution
+### Step 4: Check for Homoglyph Substitution
+
+```bash
+# Check text files for homoglyph characters
+python3 -c "
+import sys, re, os
+for root, dirs, files in os.walk('.'):
+    for fname in files:
+        if fname.endswith(('.md', '.html', '.txt', '.json', '.yaml', '.yml')):
+            fpath = os.path.join(root, fname)
+            with open(fpath, 'rb') as f:
+                content = f.read().decode('utf-8', errors='replace')
+            homoglyph_pattern = re.compile(r'[\u0400-\u04FF\u0370-\u03FF]')
+            matches = homoglyph_pattern.findall(content)
+            if matches:
+                print(f'{fpath}: {\" \".join(set(matches))}')
+" .
+```
+
+### Step 5: Check for Explicit AI Attribution
 
 ```bash
 # Search for common AI tool references
@@ -367,7 +481,7 @@ grep -r "Generated by\|Created by\|Model:\|Claude\|Anthropic\|ChatGPT\|Gemini\|M
   --include="*.json" --include="*.yaml" --include="*.yml"
 ```
 
-### Step 5: Document Results
+### Step 6: Document Results
 
 Create a compliance report:
 
@@ -379,16 +493,16 @@ Create a compliance report:
 **Auditor**: [name]  
 
 ### Files Checked
-- [ ] Text files (MD, HTML, TXT)
-- [ ] SVG files
-- [ ] PNG/JPG files
+- [ ] Text files (MD, HTML, TXT) - Zero-width, Variation selectors, Homoglyphs
+- [ ] SVG files - C2PA metadata
+- [ ] PNG/JPG files - C2PA metadata
 - [ ] Other image formats
 
 ### Results
-| File | Type | Zero-Width Chars | C2PA Metadata | Status |
-|------|------|------------------|---------------|--------|
-| document.md | Text | None | N/A | Clean |
-| image.svg | SVG | None | None | Clean |
+| File | Type | Zero-Width Chars | C2PA Metadata | Homoglyphs | Status |
+|------|------|------------------|---------------|-----------|--------|
+| document.md | Text | None | N/A | None | Clean |
+| image.svg | SVG | None | None | None | Clean |
 
 ### Conclusion
 [Summary of findings and compliance status]
@@ -444,6 +558,7 @@ Create a compliance report:
 - C2PA metadata tags and namespaces
 - Digital signature references
 - Explicit AI attribution metadata
+- Homoglyph substitution from Cyrillic and Greek scripts
 
 **What we CANNOT detect**:
 - Statistical patterns in text (require Anthropic's algorithm)
